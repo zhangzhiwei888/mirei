@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>米瑞婚纱礼服选定表</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+body, html {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: black;
+    color: white;
+    font-family: sans-serif;
+}
+#video, #previewImage {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+#ui {
+    position: absolute;
+    top: 10px; left: 10px;
+    background: rgba(0,0,0,0.5);
+    padding: 10px;
+    border-radius: 6px;
+    z-index: 10;
+}
+#flash {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: white;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+}
+button {
+    font-size: 16px;
+    padding: 8px 16px;
+    margin: 5px;
+}
+#previewOverlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    z-index: 30;
+}
+#previewButtons {
+    background: rgba(0,0,0,0.5);
+    padding: 20px;
+    width: 100%;
+    display: flex;
+    justify-content: space-around;
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<img id="previewImage" style="display:none;">
+<div id="flash"></div>
+
+<div id="ui">
+    <div>
+        婚礼日期：<input type="date" id="weddingDate">
+    </div>
+    <div>
+        礼服款式：<input type="text" id="remark" placeholder="输入礼服款式">
+    </div>
+    <button id="export">导出Excel</button>
+    <p>📷 点击屏幕任意位置拍照</p>
+</div>
+
+<div id="previewOverlay">
+    <div id="previewButtons">
+        <button id="keepPhoto" style="background-color:green;color:white;">保留</button>
+        <button id="discardPhoto" style="background-color:red;color:white;">删除</button>
+    </div>
+</div>
+
+<canvas id="canvas" style="display:none;"></canvas>
+
+<script>
+let photos = [];
+let weddingDateCache = null;
+let pendingPhoto = null;
+
+async function startCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" },
+            audio: false
+        });
+        document.getElementById('video').srcObject = stream;
+    } catch (err) {
+        alert("无法访问摄像头，请检查浏览器权限（需HTTPS或localhost）。");
+    }
+}
+startCamera();
+
+function flashScreen() {
+    const flash = document.getElementById('flash');
+    flash.style.opacity = 1;
+    setTimeout(() => flash.style.opacity = 0, 100);
+}
+
+document.body.addEventListener('click', (e) => {
+    if (e.target.closest('#ui') || e.target.closest('#previewButtons')) return;
+
+    if (!weddingDateCache) {
+        const inputDate = document.getElementById('weddingDate').value;
+        if (!inputDate) {
+            alert("请先选择婚礼日期！");
+            return;
+        }
+        weddingDateCache = inputDate;
+        document.getElementById('weddingDate').disabled = true;
+    }
+
+    const remark = document.getElementById('remark').value || "（无备注）";
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageDataURL = canvas.toDataURL("image/png");
+    const base64Data = imageDataURL.split(",")[1];
+
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+
+    pendingPhoto = {
+        img: base64Data,
+        remark: remark,
+        time: timestamp,
+        weddingDate: weddingDateCache
+    };
+
+    document.getElementById('previewImage').src = imageDataURL;
+    document.getElementById('previewImage').style.display = 'block';
+    document.getElementById('video').style.display = 'none';
+    document.getElementById('previewOverlay').style.display = 'flex';
+    flashScreen();
+});
+
+document.getElementById('keepPhoto').addEventListener('click', () => {
+    if (pendingPhoto) {
+        photos.push(pendingPhoto);
+        alert(`已保存 ${photos.length} 张照片`);
+    }
+    closePreview();
+});
+
+document.getElementById('discardPhoto').addEventListener('click', () => {
+    alert("照片已删除");
+    closePreview();
+});
+
+function closePreview() {
+    document.getElementById('previewImage').style.display = 'none';
+    document.getElementById('video').style.display = 'block';
+    document.getElementById('previewOverlay').style.display = 'none';
+    document.getElementById('remark').value = '';
+    pendingPhoto = null;
+}
+
+document.getElementById('export').addEventListener('click', async () => {
+    if (photos.length === 0) {
+        alert("请先拍摄并保留至少一张照片！");
+        return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("米瑞婚纱礼服选定表");
+
+    worksheet.getCell("A1").value = "婚礼日期";
+    worksheet.getCell("B1").value = "礼服款式";
+    worksheet.getCell("C1").value = "拍摄时间";
+    worksheet.getCell("D1").value = "照片";
+
+    worksheet.getColumn(1).width = 15;
+    worksheet.getColumn(2).width = 40;
+    worksheet.getColumn(3).width = 25;
+    worksheet.getColumn(4).width = 50;
+
+    let rowPos = 2;
+    photos.forEach((item) => {
+        worksheet.getCell(`A${rowPos}`).value = item.weddingDate;
+        worksheet.getCell(`B${rowPos}`).value = item.remark;
+        worksheet.getCell(`C${rowPos}`).value = item.time;
+
+        const imageId = workbook.addImage({
+            base64: `data:image/png;base64,${item.img}`,
+            extension: 'png',
+        });
+        worksheet.addImage(imageId, {
+            tl: { col: 3, row: rowPos - 1 },
+            ext: { width: 320, height: 240 }
+        });
+        rowPos += 15;
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const safeDate = (weddingDateCache || "未填写").replace(/-/g, "");
+    saveAs(blob, `米瑞婚纱礼服选定表-${safeDate}.xlsx`);
+});
+</script>
+</body>
+</html>
